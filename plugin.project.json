@@ -1,0 +1,6 @@
+{
+  "name": "JJRVfxExporter",
+  "tree": {
+    "$path": "plugin/VfxExporter.server.luau"
+  }
+}
