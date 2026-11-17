@@ -99,6 +99,58 @@ return {
 		t.ok(not string.find(r.value.name, "[<>%c]"), "markup/control chars removed")
 		t.ok(#r.value.name <= Config.Moveset.MaxNameLength)
 	end,
+	["domain: needs enough cursed energy and gets a long cooldown"] = function(t)
+		local domain = Blocks.create("Domain")
+		local noEnergy = MovesetValidator.moveset(moveset({ domain }))
+		t.ok(not noEnergy.ok, "domain without CE cost is rejected")
+		local cost = Blocks.create("CostEnergy")
+		cost.fields.amount = Config.Domain.MinEnergyCost
+		local r = MovesetValidator.moveset(moveset({ cost, Blocks.create("Domain") }, { cooldown = 1 }))
+		t.ok(r.ok, table.concat(r.errors, "; "))
+		t.ok(r.value.moves[1].cooldown >= Config.Domain.MinCooldown, "cooldown raised to the domain minimum")
+	end,
+	["domain: only one per move, not inside Repeat"] = function(t)
+		local cost = Blocks.create("CostEnergy")
+		cost.fields.amount = 100
+		local rep = Blocks.create("Repeat")
+		rep.fields.count = 2
+		rep.children.body = { Blocks.create("Domain") }
+		local r = MovesetValidator.moveset(moveset({ cost, rep }))
+		t.ok(not r.ok)
+	end,
+	["domain: onTick damage is multiplied by the number of ticks"] = function(t)
+		local cost = Blocks.create("CostEnergy")
+		cost.fields.amount = 60
+		local domain = Blocks.create("Domain")
+		domain.fields.seconds = 10
+		domain.fields.tick = 0.25 -- 41 ticks
+		domain.children.onTick = { damage(5) }
+		local r = MovesetValidator.moveset(moveset({ cost, domain }))
+		t.ok(not r.ok, "41 ticks x 5 damage is over budget")
+		t.eq(r.reports[1].totals.damage, 41 * 5)
+	end,
+	["charge trigger and charge fields are kept"] = function(t)
+		local d = damage(10)
+		d.fields.scaleWithCharge = true
+		local r = MovesetValidator.moveset(moveset({ hitbox({ d }) }, { trigger = { type = "Charge", fields = { maxCharge = 99 } } }))
+		t.ok(r.ok, table.concat(r.errors, "; "))
+		t.eq(r.value.moves[1].trigger.type, "Charge")
+		t.eq(r.value.moves[1].trigger.fields.maxCharge, 3, "clamped to max")
+		t.eq(r.value.moves[1].blocks[1].children.onHit[1].fields.scaleWithCharge, true)
+	end,
+	["variables and unknown animation keys are sanitized"] = function(t)
+		local v = { type = "Variable", fields = { var = "Z", scope = "Global", op = "Multiply", value = 1e9 } }
+		local a = { type = "PlayAnimation", fields = { preset = "not_a_real_key", animationId = "rbxassetid://42" } }
+		local r = MovesetValidator.moveset(moveset({ v, a }))
+		local vf = r.value.moves[1].blocks[1].fields
+		t.eq(vf.var, "A")
+		t.eq(vf.scope, "Move")
+		t.eq(vf.op, "Add")
+		t.eq(vf.value, 100)
+		local af = r.value.moves[1].blocks[2].fields
+		t.eq(af.preset, "")
+		t.eq(af.animationId, "42")
+	end,
 	["vfx: unknown layers and props are dropped, values clamped"] = function(t)
 		local effect = VfxValidator.effect({
 			name = "x",

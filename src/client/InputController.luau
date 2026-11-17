@@ -35,10 +35,22 @@ local function aim(): Vector3?
 	return camera and camera.CFrame.LookVector
 end
 
-function InputController.useMove(slot: number)
-	if InputController.enabled then
-		useMove:FireServer(slot, aim())
+-- phase "down" on press, "up" on release (Charge moves fire on release).
+local held: { [number]: boolean } = {}
+function InputController.useMove(slot: number, phase: string?)
+	local p = phase or "down"
+	if p == "down" then
+		if not InputController.enabled then
+			return
+		end
+		held[slot] = true
+	else
+		if not held[slot] then
+			return
+		end
+		held[slot] = nil
 	end
+	useMove:FireServer(slot, aim(), p)
 end
 
 function InputController.m1()
@@ -66,7 +78,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-	if input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonL2 then
+	local slot = KEYS[input.KeyCode]
+	if slot then
+		InputController.useMove(slot, "up")
+	elseif input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonL2 then
 		InputController.setBlocking(false)
 	end
 end)

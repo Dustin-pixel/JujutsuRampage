@@ -7,6 +7,10 @@
 --   target: Model?          -- set inside onHit slots and Counter/ComboFinisher
 --   shared: { anyHit: boolean, stopped: boolean, deadline: number }
 --   runBlocks: (ctx, blocks) -> ()   -- provided by the Executor for slots
+--   charge: number            -- 0..1 for Charge moves, 1 otherwise
+--   vars / fighterVars        -- move-scope and fighter-scope variables
+--   domain: Domain?           -- set inside a Domain's onTick
+--   burnout: (seconds) -> ()  -- put every move on cooldown
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -14,9 +18,12 @@ local Debris = game:GetService("Debris")
 
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local Remotes = require(Shared.Remotes)
+local Config = require(Shared.Config)
+local AnimationLibrary = require(Shared.AnimationLibrary)
 
 local CombatService = require(script.Parent.Parent.CombatService)
 local VfxService = require(script.Parent.Parent.VfxService)
+local DomainService = require(script.Parent.Parent.DomainService)
 
 local Actions: { [string]: (ctx: any, block: any) -> () } = {}
 
@@ -39,6 +46,18 @@ end
 local function isFighterPart(part: Instance): boolean
 	local model = part:FindFirstAncestorOfClass("Model")
 	return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
+end
+
+local function chargeScale(ctx: any, enabled: boolean): number
+	if not enabled then
+		return 1
+	end
+	local min = Config.Charge.MinScale
+	return min + (1 - min) * (ctx.charge or 1)
+end
+
+local function varTable(ctx: any, scope: string): { [string]: number }
+	return if scope == "Fighter" then ctx.fighterVars else ctx.vars
 end
 
 local function childCtx(ctx: any, target: Model): any
@@ -108,12 +127,32 @@ Actions.If = function(ctx, block)
 	elseif f.condition == "TargetBlocking" then
 		local ts = ctx.target and CombatService.getState(ctx.target)
 		cond = ts ~= nil and ts.blocking
+	elseif f.condition == "ChargeAbove" then
+		cond = (ctx.charge or 1) * 100 > f.value
+	elseif f.condition == "VarAbove" then
+		-- move-scope first, then fighter-scope
+		local v = ctx.vars[f.var]
+		if v == nil then
+			v = ctx.fighterVars[f.var]
+		end
+		cond = (v or 0) > f.value
+	elseif f.condition == "InOwnDomain" then
+		local d = DomainService.activeFor(ctx.caster)
+		cond = d ~= nil and DomainService.isInside(ctx.caster, d)
 	end
 	ctx.runBlocks(ctx, if cond then block.children["then"] else block.children["else"])
 end
 
 Actions.Stop = function(ctx, _block)
 	ctx.shared.stopped = true
+end
+
+Actions.Variable = function(ctx, block)
+	local f = block.fields
+	local vars = varTable(ctx, f.scope)
+	local current = vars[f.var] or 0
+	local value = if f.op == "Set" then f.value else current + f.value
+	vars[f.var] = math.clamp(value, -1000, 1000)
 end
 
 -- ── Combat ───────────────────────────────────────────────────────────────
@@ -147,40 +186,28 @@ Actions.Projectile = function(ctx, block)
 	local direction = ctx.aim or ctx.root.CFrame.LookVector
 	local cf = CFrame.lookAt(origin.Position, origin.Position + direction)
 
-	-- An invisible anchored carrier that clients attach the VFX to.
-	local carrier = Instance.new("Part")
-	carrier.Name = "Projectile"
-	carrier.Size = Vector3.one * 0.2
-	carrier.Transparency = 1
-	carrier.Anchored = true
-	carrier.CanCollide = false
-	carrier.CanQuery = false
-	carrier.CanTouch = false
-	carrier.CFrame = cf
-	carrier.Parent = workspace
-	Debris:AddItem(carrier, f.range / f.speed + 2)
-	if f.vfx ~= "" then
-		VfxService.play(ctx.ownerKey, f.vfx, { part = carrier, lifetime = f.range / f.speed })
-	end
+	-- Clients animate the projectile themselves from (origin, speed, range), so
+	-- it looks smooth; the server only simulates hits.
+	local projectileId = VfxService.projectile(ctx.ownerKey, f.vfx, cf, f.speed, f.range)
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { ctx.caster, carrier }
+	rayParams.FilterDescendantsInstances = { ctx.caster }
 
 	-- Runs in its own thread so the move continues while it flies.
 	task.spawn(function()
 		local travelled = 0
 		local hitSet: { [Model]: boolean } = {}
-		while travelled < f.range and carrier.Parent and not ctx.shared.stopped do
+		while travelled < f.range and not ctx.shared.stopped do
 			local dt = RunService.Heartbeat:Wait()
 			local step = math.min(f.speed * dt, f.range - travelled)
 			local wall = workspace:Raycast(cf.Position, cf.LookVector * step, rayParams)
 			if wall and not isFighterPart(wall.Instance) then
+				cf = CFrame.lookAt(wall.Position, wall.Position + cf.LookVector)
 				break -- hit terrain/wall
 			end
 			cf += cf.LookVector * step
 			travelled += step
-			carrier.CFrame = cf
 			local hits = CombatService.query(ctx.caster, cf, Vector3.one * f.radius * 2, "Sphere")
 			local stop = false
 			for _, model in hits do
@@ -197,9 +224,7 @@ Actions.Projectile = function(ctx, block)
 				break
 			end
 		end
-		task.delay(0.5, function()
-			carrier:Destroy()
-		end)
+		VfxService.projectileEnd(projectileId, cf.Position)
 	end)
 end
 
@@ -208,16 +233,19 @@ Actions.Damage = function(ctx, block)
 		return
 	end
 	local f = block.fields
+	local amount = f.amount * chargeScale(ctx, f.scaleWithCharge)
 	if CombatService.hasArmor(ctx.target) and not f.ignoreArmor then
-		CombatService.damage(ctx.caster, ctx.target, f.amount * 0.7, { guardBreak = f.guardBreak })
-	else
-		CombatService.damage(ctx.caster, ctx.target, f.amount, { guardBreak = f.guardBreak })
+		amount *= 0.7
 	end
+	-- Sure-hit domains can't be blocked.
+	local sureHit = ctx.domain ~= nil and ctx.domain.sureHit
+	CombatService.damage(ctx.caster, ctx.target, amount, { guardBreak = f.guardBreak, unblockable = sureHit })
 end
 
 Actions.Knockback = function(ctx, block)
 	if ctx.target then
-		CombatService.knockback(ctx.caster, ctx.target, block.fields.direction, block.fields.force)
+		local f = block.fields
+		CombatService.knockback(ctx.caster, ctx.target, f.direction, f.force * chargeScale(ctx, f.scaleWithCharge))
 	end
 end
 
@@ -335,7 +363,9 @@ local animCache: { [Animator]: { [string]: AnimationTrack } } = setmetatable({},
 
 Actions.PlayAnimation = function(ctx, block)
 	local f = block.fields
-	if f.animationId == "" then
+	local preset = f.preset ~= "" and AnimationLibrary.ByKey[f.preset]
+	local animationId = if preset then preset.id else f.animationId
+	if animationId == "" then
 		return
 	end
 	local humanoid = ctx.caster:FindFirstChildOfClass("Humanoid")
@@ -348,17 +378,17 @@ Actions.PlayAnimation = function(ctx, block)
 		cache = {}
 		animCache[animator] = cache
 	end
-	local track = cache[f.animationId]
+	local track = cache[animationId]
 	if not track then
 		local anim = Instance.new("Animation")
-		anim.AnimationId = "rbxassetid://" .. f.animationId
+		anim.AnimationId = "rbxassetid://" .. animationId
 		local ok, loaded = pcall(animator.LoadAnimation, animator, anim)
 		if not ok then
 			return
 		end
 		track = loaded
 		track.Priority = Enum.AnimationPriority.Action
-		cache[f.animationId] = track
+		cache[animationId] = track
 	end
 	if f.stopPrevious then
 		for _, t in animator:GetPlayingAnimationTracks() do
@@ -413,6 +443,53 @@ Actions.CameraShake = function(ctx, block)
 			shake:FireClient(player, f.intensity, f.seconds)
 		end
 	end
+end
+
+-- ── Domain ───────────────────────────────────────────────────────────────
+
+Actions.Domain = function(ctx, block)
+	local f = block.fields
+	local color = Color3.fromRGB(f.color[1], f.color[2], f.color[3])
+	local domain, err = DomainService.open(ctx.caster, f.radius, f.refinement, f.trap, color)
+	local player = Players:GetPlayerFromCharacter(ctx.caster)
+	if not domain then
+		if player and err == "clash_lost" then
+			Remotes.event("Notify"):FireClient(player, "Your domain was overpowered!", "warn")
+		end
+		ctx.burnout(f.burnout * 0.5)
+		return
+	end
+	domain.sureHit = f.sureHit
+	if f.vfx ~= "" then
+		VfxService.play(ctx.ownerKey, f.vfx, { cframe = CFrame.new(domain.center), lifetime = math.min(f.seconds, 6) })
+	end
+
+	-- The domain lives in the background with its own deadline, so the move
+	-- itself finishes and the caster can keep fighting inside it.
+	local domainShared = { anyHit = false, stopped = false, deadline = os.clock() + f.seconds + 1 }
+	local dctx = table.clone(ctx)
+	dctx.shared = domainShared
+	dctx.domain = domain
+	dctx.ignoreStun = true -- the barrier holds even if the caster is stunned
+	task.spawn(function()
+		local endTime = os.clock() + f.seconds
+		local slot = block.children and block.children.onTick or {}
+		while os.clock() < endTime and not domain.closed and CombatService.isAlive(ctx.caster) do
+			for _, model in domain.inside() do
+				domainShared.anyHit = true
+				local tctx = table.clone(dctx)
+				tctx.target = model
+				task.spawn(ctx.runBlocks, tctx, slot)
+			end
+			task.wait(f.tick)
+		end
+		domainShared.stopped = true
+		domain.close("expired")
+		ctx.burnout(f.burnout)
+		if player then
+			Remotes.event("Notify"):FireClient(player, `Burnout: technique unavailable for {f.burnout}s`, "warn")
+		end
+	end)
 end
 
 -- Sanity check: every schema block must have a handler.

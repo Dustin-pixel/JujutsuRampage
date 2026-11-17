@@ -13,6 +13,7 @@ local Executor = require(script.Parent.Runtime.Executor)
 local MovesetService = require(script.Parent.MovesetService)
 local RateLimiter = require(script.Parent.RateLimiter)
 local Dummies = require(script.Parent.Dummies)
+require(script.Parent.GalleryService)
 
 local notify = Remotes.event("Notify")
 
@@ -45,7 +46,7 @@ for _, player in Players:GetPlayers() do
 	end
 end
 
-Remotes.event("UseMove").OnServerEvent:Connect(function(player, slot: any, aim: any)
+Remotes.event("UseMove").OnServerEvent:Connect(function(player, slot: any, aim: any, phase: any)
 	if not RateLimiter.check(player, "UseMove", Config.RateLimit.UseMove) then
 		return
 	end
@@ -62,7 +63,7 @@ Remotes.event("UseMove").OnServerEvent:Connect(function(player, slot: any, aim: 
 	if typeof(aim) == "Vector3" and aim.Magnitude > 0.1 and aim.Magnitude < 10 and aim.X == aim.X then
 		aimDir = aim.Unit
 	end
-	Executor.use(character, slot, aimDir)
+	Executor.use(character, slot, aimDir, if phase == "up" then "up" else "down")
 end)
 
 Remotes.event("M1").OnServerEvent:Connect(function(player)

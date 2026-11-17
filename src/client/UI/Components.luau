@@ -22,6 +22,8 @@ local Theme = {
 
 local C = { Theme = Theme }
 
+local AnimationLibrary = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared").AnimationLibrary)
+
 function C.new(className: string, props: { [string]: any }?, children: { Instance }?): any
 	local inst = Instance.new(className)
 	if props then
@@ -385,12 +387,19 @@ function C.editor(def: any, value: any, onChange: (any) -> (), extra: any?): Gui
 		return C.sequenceEditor(def, value, onChange)
 	elseif t == "asset" then
 		return C.assetEditor(def, value, onChange)
-	elseif t == "vfx" then
+	elseif t == "vfx" or t == "anim" then
 		local options = { "" }
 		local names = { "(none)" }
-		for _, o in (extra and extra.vfxOptions) or {} do
-			table.insert(options, o.id)
-			table.insert(names, o.name)
+		if t == "vfx" then
+			for _, o in (extra and extra.vfxOptions) or {} do
+				table.insert(options, o.id)
+				table.insert(names, o.name)
+			end
+		else
+			for _, e in AnimationLibrary.List do
+				table.insert(options, e.key)
+				table.insert(names, e.name)
+			end
 		end
 		local index = table.find(options, value) or 1
 		local row, area = C.row(def.label or def.key)

@@ -29,6 +29,26 @@ Config.Budget = {
 	DamagePerCooldownSecond = 12, -- damage over this ratio forces a longer cooldown
 }
 
+Config.Domain = {
+	MinEnergyCost = 50, -- a move with a Domain must spend at least this much CE
+	MinCooldown = 60,
+	MaxPerMove = 1,
+}
+
+Config.Charge = {
+	MinScale = 0.25, -- Damage/Knockback with "scale with charge" at 0% charge
+	SpeedWhileCharging = 0.5,
+}
+
+Config.Gallery = {
+	PageSize = 20,
+	CacheSeconds = 45,
+	MaxPublishedPerPlayer = 10,
+	PublishCooldown = 60, -- seconds between publishes per player
+	HideAtReports = 5,
+	MaxDescriptionLength = 200,
+}
+
 Config.Combat = {
 	MaxHealth = 100,
 	MaxCursedEnergy = 100,
@@ -57,6 +77,7 @@ Config.RateLimit = {
 	UseMove = 12, -- requests per second
 	Save = 1 / 2, -- one save per 2 seconds
 	Import = 1 / 2,
+	Gallery = 2, -- browse/like requests per second
 }
 
 return Config

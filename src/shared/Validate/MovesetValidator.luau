@@ -18,6 +18,7 @@ local Config = require(script.Parent.Parent.Config)
 local Blocks = require(script.Parent.Parent.Schema.Blocks)
 local Triggers = require(script.Parent.Parent.Schema.Triggers)
 local Sanitize = require(script.Parent.Sanitize)
+local AnimationLibrary = require(script.Parent.Parent.AnimationLibrary)
 local VfxValidator = require(script.Parent.VfxValidator)
 
 local M = Config.Moveset
@@ -31,6 +32,8 @@ export type Totals = {
 	hitboxes: number,
 	projectiles: number,
 	heal: number,
+	energy: number,
+	domains: number,
 }
 
 export type MoveReport = {
@@ -48,15 +51,6 @@ export type Result = {
 	reports: { MoveReport },
 }
 
--- Targets: how many times blocks inside a target slot can run per execution.
-local function slotMultiplier(def: Blocks.BlockDef, fields: any, slot: string): number
-	if def.id == "Hitbox" and slot == "onHit" then
-		return fields.maxTargets
-	elseif def.id == "Projectile" and slot == "onHit" then
-		return if fields.pierce then 5 else 1
-	end
-	return 1
-end
 
 local function sanitizeField(field: Blocks.Field, v: any): any
 	local t = field.type
@@ -74,6 +68,10 @@ local function sanitizeField(field: Blocks.Field, v: any): any
 		return Sanitize.asset(v)
 	elseif t == "vfx" then
 		return Sanitize.id(v)
+	elseif t == "color" then
+		return Sanitize.color(v, field.default)
+	elseif t == "anim" then
+		return if type(v) == "string" and AnimationLibrary.ByKey[v] then v else ""
 	end
 	return field.default
 end
@@ -91,6 +89,8 @@ local function addTotals(totals: Totals, budget: Blocks.Budget, mult: number, da
 	totals.hitboxes += (budget.hitboxes or 0) * mult
 	totals.projectiles += (budget.projectiles or 0) * mult
 	totals.heal += (budget.heal or 0) * mult
+	totals.energy += (budget.energy or 0) -- spent once per block, Repeat doesn't help reach the minimum
+	totals.domains += (budget.domains or 0) * mult
 end
 
 -- Returns a clean list of blocks. `mult` multiplies counts/durations;
@@ -125,7 +125,12 @@ local function sanitizeBlocks(raw: any, ctx: Ctx, depth: number, hasTarget: bool
 		end
 
 		if def.budget then
-			addTotals(ctx.report.totals, def.budget(fields), mult, damageMult)
+			local budget = def.budget(fields)
+			if def.background then
+				budget = table.clone(budget)
+				budget.duration = nil
+			end
+			addTotals(ctx.report.totals, budget, mult, damageMult)
 		end
 
 		local block: any = { type = def.id, fields = fields }
@@ -141,8 +146,18 @@ local function sanitizeBlocks(raw: any, ctx: Ctx, depth: number, hasTarget: bool
 					end
 				else
 					local slotTarget = hasTarget or (def.targetSlots ~= nil and def.targetSlots[slot] == true)
-					local sm = slotMultiplier(def, fields, slot)
-					block.children[slot] = sanitizeBlocks(rawChildren[slot], ctx, depth + 1, slotTarget, mult * childMult * sm, damageMult * childMult)
+					local countMult, slotDamageMult = 1, 1
+					if def.slotMultiplier then
+						countMult, slotDamageMult = def.slotMultiplier(fields, slot)
+					end
+					block.children[slot] = sanitizeBlocks(
+						rawChildren[slot],
+						ctx,
+						depth + 1,
+						slotTarget,
+						mult * childMult * countMult,
+						damageMult * childMult * slotDamageMult
+					)
 				end
 			end
 		end
@@ -172,12 +187,23 @@ local function checkBudget(report: MoveReport, name: string)
 		over("total healing", t.heal, B.MaxHeal)
 	end
 	report.minCooldown = math.max(B.MinCooldown, t.damage / B.DamagePerCooldownSecond, t.heal / 2)
+
+	if t.domains > 0 then
+		local D = Config.Domain
+		if t.domains > D.MaxPerMove then
+			table.insert(report.errors, `{name}: only {D.MaxPerMove} Domain Expansion per move (and it can't be inside Repeat or onHit).`)
+		end
+		if t.energy < D.MinEnergyCost then
+			table.insert(report.errors, `{name}: a Domain Expansion must spend at least {D.MinEnergyCost} cursed energy (add Spend Cursed Energy).`)
+		end
+		report.minCooldown = math.max(report.minCooldown, D.MinCooldown)
+	end
 end
 
 function MovesetValidator.move(raw: any, index: number, vfxIds: { [string]: boolean }): (any, MoveReport)
 	raw = if type(raw) == "table" then raw else {}
 	local report: MoveReport = {
-		totals = { damage = 0, duration = 0, hitboxes = 0, projectiles = 0, heal = 0 },
+		totals = { damage = 0, duration = 0, hitboxes = 0, projectiles = 0, heal = 0, energy = 0, domains = 0 },
 		errors = {},
 		warnings = {},
 		minCooldown = B.MinCooldown,

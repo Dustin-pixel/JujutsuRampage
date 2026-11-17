@@ -14,6 +14,7 @@ local Config = require(Shared.Config)
 local C = require(script.Parent.Components)
 local SkillBuilder = require(script.Parent.SkillBuilder)
 local VfxEditor = require(script.Parent.VfxEditor)
+local Gallery = require(script.Parent.Gallery)
 local Store = require(script.Parent.Parent.Store)
 local InputController = require(script.Parent.Parent.InputController)
 
@@ -163,9 +164,17 @@ function App.start()
 	local cooldownEnds: { [number]: number } = {}
 	local cooldownLengths: { [number]: number } = {}
 	for i = 1, Config.Moveset.MaxMoves do
-		local b = C.button("", T.Panel, function()
-			InputController.useMove(i)
-		end, { LayoutOrder = i, TextWrapped = true, TextSize = 11, Parent = hotbar })
+		local b = C.button("", T.Panel, function() end, { LayoutOrder = i, TextWrapped = true, TextSize = 11, Parent = hotbar })
+		-- press/release so "Hold to Charge" moves work on touch and mouse too
+		b.MouseButton1Down:Connect(function()
+			InputController.useMove(i, "down")
+		end)
+		b.MouseButton1Up:Connect(function()
+			InputController.useMove(i, "up")
+		end)
+		b.MouseLeave:Connect(function()
+			InputController.useMove(i, "up")
+		end)
 		C.label(tostring(i), { Size = UDim2.new(0, 14, 0, 14), Position = UDim2.new(0, 4, 0, 2), TextSize = 11, TextColor3 = T.SubText, Parent = b })
 		local cover = C.new("Frame", {
 			BackgroundColor3 = Color3.new(),
@@ -199,7 +208,12 @@ function App.start()
 			local move = moveset and moveset.moves[i]
 			if move then
 				local trig = move.trigger.type
-				local suffix = if trig == "Press" then "" elseif trig == "Counter" then "\n(counter)" elseif trig == "Passive" then "\n(passive)" else "\n(finisher)"
+				local suffix = if trig == "Press"
+					then ""
+					elseif trig == "Charge" then "\n(hold)"
+					elseif trig == "Counter" then "\n(counter)"
+					elseif trig == "Passive" then "\n(passive)"
+					else "\n(finisher)"
 				slot.button.Text = move.name .. suffix
 			else
 				slot.button.Text = ""
@@ -242,6 +256,7 @@ function App.start()
 	local pages = {
 		Techniques = C.new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, T.RowHeight + 8), Size = UDim2.new(1, 0, 1, -(T.RowHeight + 8)), Parent = window }),
 		VFX = C.new("Frame", { Visible = false, BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, T.RowHeight + 8), Size = UDim2.new(1, 0, 1, -(T.RowHeight + 8)), Parent = window }),
+		Gallery = C.new("Frame", { Visible = false, BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, T.RowHeight + 8), Size = UDim2.new(1, 0, 1, -(T.RowHeight + 8)), Parent = window }),
 	}
 	local tabButtons = {}
 	function app.setTab(name: string)
@@ -249,20 +264,26 @@ function App.start()
 			page.Visible = n == name and window.Visible
 			tabButtons[n].BackgroundColor3 = if n == name then T.Accent else T.PanelLight
 		end
+		local changed = app.currentTab ~= name
 		app.currentTab = name
+		if name == "Gallery" and window.Visible and (changed or not app.galleryOpened) then
+			app.galleryOpened = true
+			app.gallery.open()
+		end
 	end
-	for i, name in { "Techniques", "VFX" } do
+	for i, name in { "Techniques", "VFX", "Gallery" } do
 		tabButtons[name] = C.button(name, nil, function()
 			app.setTab(name)
 		end, { LayoutOrder = i, Size = UDim2.new(0, 120, 1, 0), Parent = tabs })
 	end
-	C.label("JUJUTSU RAMPAGE · BUILDER", { LayoutOrder = 3, Size = UDim2.new(0, 260, 1, 0), Font = T.FontBold, TextColor3 = T.SubText, Parent = tabs })
+	C.label("JUJUTSU RAMPAGE · BUILDER", { LayoutOrder = 4, Size = UDim2.new(0, 260, 1, 0), Font = T.FontBold, TextColor3 = T.SubText, Parent = tabs })
 	C.button("Close (B)", T.Danger, function()
 		app.toggle(false)
-	end, { LayoutOrder = 4, Size = UDim2.new(0, 100, 1, 0), Parent = tabs })
+	end, { LayoutOrder = 5, Size = UDim2.new(0, 100, 1, 0), Parent = tabs })
 
 	app.builder = SkillBuilder.new(pages.Techniques, app)
 	app.vfx = VfxEditor.new(pages.VFX, app)
+	app.gallery = Gallery.new(pages.Gallery, app)
 	app.currentTab = "Techniques"
 
 	local openedOnce = false

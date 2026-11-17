@@ -52,6 +52,8 @@ local function filterMoveset(moveset: any, userId: number)
 	end
 end
 
+MovesetService.filter = filter
+
 -- Helpers ---------------------------------------------------------------------
 
 local function count(t: { [any]: any }): number
@@ -231,13 +233,11 @@ end
 -- Decodes and validates a pasted code, then stores the result:
 --   moveset -> next free technique slot (its effects are also added to the VFX library)
 --   vfx     -> the VFX library
-Remotes.func("ImportCode").OnServerInvoke = function(player, code: any)
+-- Shared by pasted codes and the public gallery. Not rate limited here.
+function MovesetService.importCode(player: Player, code: any): any
 	local profile = profileFor(player)
 	if not profile then
 		return { ok = false, error = "Profile not loaded yet." }
-	end
-	if not RateLimiter.check(player, "Import", Config.RateLimit.Import) then
-		return { ok = false, error = "You're importing too fast." }
 	end
 	if type(code) ~= "string" then
 		return { ok = false, error = "Code must be text." }
@@ -321,6 +321,13 @@ Remotes.func("ImportCode").OnServerInvoke = function(player, code: any)
 		warnings = result.warnings,
 		errors = result.errors, -- non-empty = over budget: saved but not equippable until fixed
 	}
+end
+
+Remotes.func("ImportCode").OnServerInvoke = function(player, code: any)
+	if not RateLimiter.check(player, "Import", Config.RateLimit.Import) then
+		return { ok = false, error = "You're importing too fast." }
+	end
+	return MovesetService.importCode(player, code)
 end
 
 -- Equip on spawn ------------------------------------------------------------------

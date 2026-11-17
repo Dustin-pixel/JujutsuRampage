@@ -16,6 +16,14 @@ local list: { TriggerDef } = {
 		fields = {},
 	},
 	{
+		id = "Charge",
+		label = "Hold to Charge",
+		description = "Hold the key to charge, release to fire. Charge (0-100%) can scale Damage / Knockback and be checked with If › ChargeAbove. You move slower while charging.",
+		fields = {
+			{ key = "maxCharge", label = "Full charge (s)", type = "number", default = 1.5, min = 0.3, max = 3, step = 0.1 },
+		},
+	},
+	{
 		id = "Counter",
 		label = "Counter",
 		description = "Pressing the key opens a counter window. If you're attacked during it, the hit is cancelled and the move runs with the attacker as its target.",

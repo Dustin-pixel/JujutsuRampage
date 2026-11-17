@@ -54,6 +54,25 @@ function VfxService.play(ownerKey: string, effectId: string, attach: Attach)
 	playVfx:FireAllClients(ownerKey, effectId, attach)
 end
 
+-- Projectiles: clients animate them locally from origin/speed/range (smooth,
+-- no per-frame replication). The server tells them when it stopped early.
+local projectileEvent = Remotes.event("Projectile")
+local projectileEndEvent = Remotes.event("ProjectileEnd")
+local nextProjectileId = 0
+
+function VfxService.projectile(ownerKey: string, effectId: string, origin: CFrame, speed: number, range: number): number
+	nextProjectileId += 1
+	local id = nextProjectileId
+	if effectId ~= "" and VfxService.has(ownerKey, effectId) then
+		projectileEvent:FireAllClients(id, ownerKey, effectId, origin, speed, range)
+	end
+	return id
+end
+
+function VfxService.projectileEnd(id: number, position: Vector3)
+	projectileEndEvent:FireAllClients(id, position)
+end
+
 -- Late joiners get every library that is currently equipped.
 Players.PlayerAdded:Connect(function(player)
 	for key, lib in libraries do

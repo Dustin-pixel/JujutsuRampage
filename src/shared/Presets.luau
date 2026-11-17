@@ -147,14 +147,14 @@ Presets.StarterMoveset = {
 		{
 			name = "Cursed Blast",
 			cooldown = 7,
-			trigger = { type = "Press" },
+			trigger = { type = "Charge", fields = { maxCharge = 1.2 } },
 			blocks = {
 				block("CostEnergy", { amount = 20 }),
 				block("FaceTarget", { range = 60 }),
 				block("Projectile", { speed = 90, range = 100, radius = 2, vfx = "orb" }, {
 					onHit = {
-						block("Damage", { amount = 12 }),
-						block("Knockback", { direction = "Away", force = 60 }),
+						block("Damage", { amount = 14, scaleWithCharge = true }),
+						block("Knockback", { direction = "Away", force = 70, scaleWithCharge = true }),
 						block("PlayVfx", { vfx = "impact", at = "Target", seconds = 0.4 }),
 						block("CameraShake", { intensity = 0.6, seconds = 0.25 }),
 					},
@@ -191,6 +191,31 @@ Presets.StarterMoveset = {
 				block("Damage", { amount = 10 }),
 				block("Stun", { seconds = 1 }),
 				block("Knockback", { direction = "Up", force = 50 }),
+			},
+		},
+		{
+			name = "Domain: Cursed Void",
+			cooldown = 90,
+			trigger = { type = "Press" },
+			blocks = {
+				block("CostEnergy", { amount = 60 }),
+				block("Armor", { seconds = 0.6 }),
+				block("Domain", {
+					radius = 30,
+					seconds = 6,
+					tick = 1,
+					refinement = 5,
+					sureHit = true,
+					trap = true,
+					burnout = 10,
+					color = { 25, 0, 45 },
+					vfx = "spark",
+				}, {
+					onTick = {
+						block("Damage", { amount = 5 }),
+						block("PlayVfx", { vfx = "impact", at = "Target", seconds = 0.4 }),
+					},
+				}),
 			},
 		},
 	},

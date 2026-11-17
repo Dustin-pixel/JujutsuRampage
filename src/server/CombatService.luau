@@ -210,6 +210,7 @@ export type HitResult = "hit" | "blocked" | "countered" | "invalid"
 export type DamageOptions = {
 	guardBreak: boolean?,
 	ignoreArmor: boolean?,
+	unblockable: boolean?, -- domain sure-hit: ignores blocking and counters
 }
 
 function CombatService.damage(attacker: Model, target: Model, amount: number, opts: DamageOptions?): HitResult
@@ -222,13 +223,13 @@ function CombatService.damage(attacker: Model, target: Model, amount: number, op
 
 	-- Counter window: cancel the hit and fire the counter move.
 	local counter = ts.counter
-	if counter and counter.untilTime > now() then
+	if counter and counter.untilTime > now() and not o.unblockable then
 		ts.counter = nil
 		task.spawn(counter.onCountered, attacker)
 		return "countered"
 	end
 
-	if ts.blocking and isFacing(target, attacker) then
+	if ts.blocking and not o.unblockable and isFacing(target, attacker) then
 		if o.guardBreak then
 			ts.blocking = false
 			CombatService.stun(target, 1.2)

@@ -13,7 +13,7 @@
 
 local Util = require(script.Parent.Parent.Util)
 
-export type FieldType = "number" | "int" | "bool" | "enum" | "vector3" | "asset" | "vfx"
+export type FieldType = "number" | "int" | "bool" | "enum" | "vector3" | "asset" | "vfx" | "color" | "anim"
 
 export type Field = {
 	key: string,
@@ -33,12 +33,14 @@ export type Budget = {
 	hitboxes: number?,
 	projectiles: number?,
 	heal: number?,
+	energy: number?, -- cursed energy spent (domains require a minimum)
+	domains: number?,
 }
 
 export type BlockDef = {
 	id: string,
 	label: string,
-	category: "Flow" | "Combat" | "Movement" | "Self" | "Visual",
+	category: "Flow" | "Combat" | "Movement" | "Self" | "Visual" | "Domain",
 	description: string,
 	fields: { Field },
 	-- Named child lists ("branches"). Repeat has "body", If has "then"/"else",
@@ -52,6 +54,12 @@ export type BlockDef = {
 	budget: ((fields: { [string]: any }) -> Budget)?,
 	-- Multiplies the cost of everything in its slots (Repeat).
 	childMultiplier: ((fields: { [string]: any }) -> number)?,
+	-- How many times a slot can run per execution of this block, as
+	-- (countMultiplier, damageMultiplier). Counts cover hitboxes/durations
+	-- (per target), damage is per target. Default (1, 1).
+	slotMultiplier: ((fields: { [string]: any }, slot: string) -> (number, number))?,
+	-- Starts a background thread; its own time does not count toward the move's duration.
+	background: boolean?,
 	color: Color3?,
 }
 
@@ -76,6 +84,12 @@ end
 local function vfx(key: string, label: string): Field
 	return { key = key, label = label, type = "vfx", default = "" }
 end
+local function color(key: string, label: string, default: { number }): Field
+	return { key = key, label = label, type = "color", default = default }
+end
+local function anim(key: string, label: string): Field
+	return { key = key, label = label, type = "anim", default = "" }
+end
 
 local CATEGORY_COLORS = {
 	Flow = Color3.fromRGB(240, 180, 60),
@@ -83,9 +97,11 @@ local CATEGORY_COLORS = {
 	Movement = Color3.fromRGB(70, 170, 240),
 	Self = Color3.fromRGB(90, 210, 130),
 	Visual = Color3.fromRGB(170, 110, 240),
+	Domain = Color3.fromRGB(230, 50, 110),
 }
 
 local DIRECTIONS = { "Forward", "Backward", "Left", "Right", "Up", "Down" }
+local VARIABLES = { "A", "B", "C", "Stacks" }
 
 local list: { BlockDef } = {
 	-- ── Flow ──────────────────────────────────────────────────────────────
@@ -116,8 +132,9 @@ local list: { BlockDef } = {
 		category = "Flow",
 		description = "Run 'then' when the condition is true, otherwise 'else'.",
 		fields = {
-			enum("condition", "Condition", { "AnyTargetHit", "HealthBelow", "EnergyAbove", "Chance", "Airborne", "TargetBlocking" }),
-			num("value", "Value (% / CE)", 50, 0, 100, 1, "Used by HealthBelow (%), EnergyAbove (CE) and Chance (%)."),
+			enum("condition", "Condition", { "AnyTargetHit", "HealthBelow", "EnergyAbove", "Chance", "Airborne", "TargetBlocking", "ChargeAbove", "VarAbove", "InOwnDomain" }),
+			num("value", "Value", 50, -100, 100, 1, "HealthBelow (%), EnergyAbove (CE), Chance (%), ChargeAbove (%), VarAbove (number)."),
+			enum("var", "Variable (VarAbove)", VARIABLES),
 		},
 		slots = { "then", "else" },
 	},
@@ -127,6 +144,18 @@ local list: { BlockDef } = {
 		category = "Flow",
 		description = "End the move immediately.",
 		fields = {},
+	},
+	{
+		id = "Variable",
+		label = "Variable",
+		category = "Flow",
+		description = "Set or add to a variable. 'Move' variables reset each time the move runs; 'Fighter' variables are shared by all your moves (great for stacks / marks) and reset on respawn.",
+		fields = {
+			enum("var", "Variable", VARIABLES),
+			enum("scope", "Scope", { "Move", "Fighter" }),
+			enum("op", "Operation", { "Add", "Set" }),
+			num("value", "Value", 1, -100, 100, 1),
+		},
 	},
 
 	-- ── Combat ────────────────────────────────────────────────────────────
@@ -144,6 +173,9 @@ local list: { BlockDef } = {
 		},
 		slots = { "onHit" },
 		targetSlots = { onHit = true },
+		slotMultiplier = function(f)
+			return f.maxTargets, 1
+		end,
 		budget = function(f)
 			return { hitboxes = 1, duration = f.duration }
 		end,
@@ -163,7 +195,10 @@ local list: { BlockDef } = {
 		},
 		slots = { "onHit" },
 		targetSlots = { onHit = true },
-		budget = function(f)
+		slotMultiplier = function(f)
+			return if f.pierce then 5 else 1, 1
+		end,
+		budget = function(_f)
 			return { projectiles = 1 }
 		end,
 	},
@@ -177,6 +212,7 @@ local list: { BlockDef } = {
 			num("amount", "Amount", 8, 0, 30, 0.5),
 			bool("guardBreak", "Breaks block", false),
 			bool("ignoreArmor", "Ignore super armor", false),
+			bool("scaleWithCharge", "Scale with charge", false),
 		},
 		budget = function(f)
 			return { damage = f.amount }
@@ -191,6 +227,7 @@ local list: { BlockDef } = {
 		fields = {
 			enum("direction", "Direction", { "Away", "Toward", "Up", "Down", "Forward" }),
 			num("force", "Force", 40, 0, 120, 1),
+			bool("scaleWithCharge", "Scale with charge", false),
 		},
 	},
 	{
@@ -256,6 +293,9 @@ local list: { BlockDef } = {
 		category = "Self",
 		description = "Spend cursed energy. If you don't have enough, the move stops here.",
 		fields = { num("amount", "Amount", 15, 0, 100, 1) },
+		budget = function(f)
+			return { energy = f.amount }
+		end,
 	},
 	{
 		id = "Heal",
@@ -292,7 +332,8 @@ local list: { BlockDef } = {
 		category = "Visual",
 		description = "Play an animation on your character.",
 		fields = {
-			asset("animationId", "Animation ID", "rbxassetid number. Must be owned by the game's creator/group."),
+			anim("preset", "Animation"),
+			asset("animationId", "Custom ID", "Only used when no Animation is picked. Must be owned by the game's creator/group, so most players should pick from the list."),
 			num("speed", "Speed", 1, 0.1, 3),
 			bool("stopPrevious", "Stop other anims", true),
 		},
@@ -331,12 +372,42 @@ local list: { BlockDef } = {
 			num("radius", "Radius", 40, 0, 150, 1),
 		},
 	},
+
+	-- ── Domain ────────────────────────────────────────────────────────────
+	{
+		id = "Domain",
+		label = "Domain Expansion",
+		category = "Domain",
+		description = "Expand a domain around you. Every tick, 'onTick' runs on each enemy inside. Sure-hit ignores blocking. Overlapping domains clash: the higher refinement wins, ties collapse both. Afterwards your technique burns out for a while.",
+		fields = {
+			num("radius", "Radius", 30, 10, 60, 1),
+			num("seconds", "Duration", 6, 2, 10, 0.5),
+			num("tick", "Tick every (s)", 1, 0.25, 2, 0.25),
+			int("refinement", "Refinement", 5, 1, 10),
+			bool("sureHit", "Sure-hit", true),
+			bool("trap", "Trap enemies inside", true),
+			num("burnout", "Burnout (s)", 10, 5, 30, 1),
+			color("color", "Barrier colour", { 20, 0, 40 }),
+			vfx("vfx", "Expansion VFX"),
+		},
+		slots = { "onTick" },
+		targetSlots = { onTick = true },
+		background = true,
+		slotMultiplier = function(f)
+			local ticks = math.floor(f.seconds / f.tick) + 1
+			return ticks * 5, ticks
+		end,
+		budget = function(_f)
+			return { domains = 1 }
+		end,
+	},
 }
 
 local Blocks = {
 	List = list,
 	ById = {} :: { [string]: BlockDef },
-	Categories = { "Flow", "Combat", "Movement", "Self", "Visual" },
+	Categories = { "Flow", "Combat", "Movement", "Self", "Visual", "Domain" },
+	Variables = VARIABLES,
 	CategoryColors = CATEGORY_COLORS,
 }
 

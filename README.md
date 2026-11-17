@@ -4,10 +4,15 @@ A Roblox fighting game where **every player designs their own cursed technique f
 
 ## Features
 
-- **Skill builder.** Each technique has up to 6 moves. A move is a trigger (Press, Counter, Combo Finisher, or Passive) followed by an ordered list of blocks. Blocks cover hitboxes, projectiles, damage, knockback, stun, grabs, dashes, teleports, healing, super armor, animations, VFX, sounds, and camera shake. Blocks like `Repeat`, `If`, `Hitbox → onHit`, and `Projectile → onHit` hold nested branches.
+- **Skill builder.** Each technique has up to 6 moves. A move is a trigger (Press, Hold to Charge, Counter, Combo Finisher, or Passive) followed by an ordered list of blocks. Blocks cover hitboxes, projectiles, damage, knockback, stun, grabs, dashes, teleports, healing, super armor, animations, VFX, sounds, and camera shake. Blocks like `Repeat`, `If`, `Hitbox → onHit`, and `Projectile → onHit` hold nested branches.
 - **Budgets.** The builder shows each move's total damage, duration, hitbox count, and so on against the limits in `Config.luau`, and raises cooldowns to match a move's power. Imported codes go through the same checks, so nobody can import a broken move.
 - **Share codes.** Techniques and effects export as `JJR1.M.…` or `JJR1.V.…` codes, which are compressed with a checksum. A technique code carries the effects it uses, so one code shares everything.
 - **VFX editor.** Stack Emitter, Mesh, Beam, and Light layers. Edit every property, including color and size sequences. A live preview plays in front of your character. Meshes can use your own uploaded mesh IDs or built-in shapes (sphere, cylinder, block, wedge).
+- **Domain expansions.** A barrier with sure-hit ticks, trapping, refinement-based domain clashes, and burnout afterward.
+- **Charge moves and variables.** Hold to charge and scale damage or knockback with the charge. Move-scope and fighter-scope variables let you build stacks and empowered follow-ups.
+- **Public gallery.** Publish techniques, browse them by newest or most liked, like, report, and import with one click.
+- **Animation library.** You upload animations once, and players pick them by name in the builder.
+- **Smooth projectiles.** Clients animate projectiles locally while the server checks hits.
 - **Studio VFX exporter plugin.** Build an effect in Studio with real ParticleEmitters, Beams, lights, and MeshParts, click **Export VFX**, and paste the code into the game.
 - **Basics.** M1 combos, blocking (F), cursed energy, training dummies, DataStore saves with session locking, and text filtering.
 
@@ -62,6 +67,22 @@ rojo build plugin.project.json -o JJRVfxExporter.rbxm
 
 Put `JJRVfxExporter.rbxm` in your Studio Plugins folder (*Plugins → Plugins Folder*). Open a place that has the game code synced, select the Part, Model, or Attachment that holds your effect, and click **JujutsuRampage → Export VFX**. The plugin's header comment lists the optional attributes (`Delay`, `EmitCount`, `Duration`, `EndScale`, `Spin`, …) for timing control.
 
+## Animation library (do this before launch)
+
+Roblox only plays animations owned by the game's creator, so players can't use their own uploads. Animate a set of moves (punches, kicks, casting poses, hand signs), publish them under the account or group that owns the game, and list them in `src/shared/AnimationLibrary.luau`:
+
+```lua
+{ key = "punch_r", name = "Right Punch", id = "1234567890" },
+```
+
+Never change a `key` once players are using it, because share codes store the key.
+
+## Gallery notes
+
+- Gallery data lives in the DataStore `Gallery_v1`. Each server batches writes to the shared index every 20 s, because DataStores limit how often one key can be written. A new like can take up to about a minute to show up on other servers.
+- Entries with 5 or more reports are hidden. For moderation, look up the entry in `index` with a DataStore editor plugin and remove it.
+- Only techniques that pass the budget can be published. Imports from the gallery are validated exactly like pasted codes.
+
 ## Project layout
 
 ```
@@ -72,8 +93,8 @@ src/shared/      code shared by client and server (ReplicatedStorage.Shared)
   Validate/      Sanitize, MovesetValidator, VfxValidator (everything untrusted goes through these)
   Vfx/           VfxSchema (allowed layers and properties), VfxSerialize, VfxBuilder (plays effects)
   Presets        the starter technique and starter effects
-src/server/      CombatService, Runtime/Executor + Actions, MovesetService, DataService, VfxService, Dummies
-src/client/      InputController, VfxPlayer, Store, UI/ (App, SkillBuilder, VfxEditor, Components)
+src/server/      CombatService, DomainService, GalleryService, Runtime/Executor + Actions, MovesetService, DataService, VfxService, Dummies
+src/client/      InputController, VfxPlayer, Store, UI/ (App, SkillBuilder, VfxEditor, Gallery, Components)
 plugin/          the Studio VFX exporter
 tests/           specs for the codec and validators
 docs/BLOCKS.md   block reference and code format
@@ -98,8 +119,7 @@ The builder palette and inspector pick it up automatically.
 
 ## Roadmap ideas
 
-- Domain expansions (a special move type with an arena and sure-hit effects)
-- Hold/charge triggers and variables
-- Client-side hit prediction and smoother projectile replication
-- Ranked/casual queues, a public code browser with likes
-- An animation-ID library so players can pick animations without uploading
+- **Ranked/casual queues.** These need a lobby place plus arena places, connected with `TeleportService` and `MemoryStoreService` for matchmaking. That means publishing several places under one universe, so it's best done once the core gameplay feels right.
+- **Client-side hit prediction.** Show hit effects instantly on the attacker's screen while the server stays authoritative.
+- **Domain extras.** Custom barrier meshes, domain amplification, and Simple Domain as a counter to sure-hit.
+- **More triggers.** On-dodge, and low-HP awakening.

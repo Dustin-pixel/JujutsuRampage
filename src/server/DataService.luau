@@ -5,7 +5,7 @@
 -- API Services"), so the game is still testable.
 --
 -- Profile shape:
---   { version = 1, slots = { [1..5] = moveset }, equipped = 0, vfx = { [id] = effect } }
+--   { version = 1, slots = { [1..5] = moveset }, equipped = 0, vfx = { [id] = effect }, published = { entryId } }
 --
 -- Everything loaded is re-validated, so a bad save can't crash the game.
 
@@ -48,6 +48,7 @@ local function newProfile(): any
 		slots = { starter },
 		equipped = 1,
 		vfx = VfxValidator.library(Presets.StarterVfx),
+		published = {}, -- gallery entry ids
 	}
 end
 
@@ -63,6 +64,15 @@ local function cleanProfile(raw: any): any
 				local result = MovesetValidator.moveset(m)
 				-- keep over-budget saves so the owner can fix them, but they can't be equipped
 				profile.slots[i] = result.value
+			end
+		end
+	end
+	profile.published = {}
+	if type(raw.published) == "table" then
+		for i = 1, Config.Gallery.MaxPublishedPerPlayer do
+			local id = raw.published[i]
+			if type(id) == "string" and #id <= 16 then
+				table.insert(profile.published, id)
 			end
 		end
 	end
